@@ -1,0 +1,6 @@
+{
+  "name": "VocalGuard - Multilingual AI Voice & Deepfake Detection",
+  "description": "Production-grade AI speech & synthetic voice detection system supporting Tamil, English, Hindi, Malayalam, and Telugu with acoustic spectral analysis, MFCC extraction, confidence scoring, and PostgreSQL history.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

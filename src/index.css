@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@media (pointer: fine) {
+  body {
+    cursor: default;
+  }
+  input[type="text"], textarea {
+    cursor: text;
+  }
+  button, a, select, [role="button"], .cursor-pointer {
+    cursor: pointer;
+  }
+}
