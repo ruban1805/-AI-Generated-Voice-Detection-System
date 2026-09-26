@@ -1,5 +1,5 @@
 import { db } from './index.ts';
-import { predictions, modelBenchmarks } from './schema.ts';
+import { predictions, modelBenchmarks, users } from './schema.ts';
 import { eq, desc, and } from 'drizzle-orm';
 
 export interface InsertPredictionParams {
@@ -121,5 +121,30 @@ export async function getModelBenchmarks() {
   } catch (error) {
     console.error('Database query model benchmarks failed:', error);
     throw new Error('Failed to fetch model benchmarks', { cause: error });
+  }
+}
+
+export async function getOrCreateUser(uid: string, email: string, displayName?: string) {
+  try {
+    const result = await db
+      .insert(users)
+      .values({
+        uid,
+        email,
+        displayName: displayName || null,
+      })
+      .onConflictDoUpdate({
+        target: users.uid,
+        set: {
+          email,
+          displayName: displayName || null,
+        },
+      })
+      .returning();
+
+    return result[0];
+  } catch (error) {
+    console.error('Error in getOrCreateUser:', error);
+    throw new Error('Database operation failed for user', { cause: error });
   }
 }
