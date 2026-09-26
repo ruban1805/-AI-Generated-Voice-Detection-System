@@ -9,6 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { ModelBenchmark } from '../types/index.ts';
+import { getApiUrl } from '../utils/api.ts';
 
 export const ModelEvaluation: React.FC = () => {
   const [benchmarks, setBenchmarks] = useState<ModelBenchmark[]>([]);
@@ -17,7 +18,7 @@ export const ModelEvaluation: React.FC = () => {
   const fetchBenchmarks = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/benchmarks');
+      const res = await fetch(getApiUrl('/api/benchmarks'));
       if (res.ok) {
         const data = await res.json();
         setBenchmarks(data);

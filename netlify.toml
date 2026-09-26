@@ -1,0 +1,24 @@
+# Netlify Deployment Configuration for VocalGuard Frontend
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Optional: If you host your Express backend (server.ts) on Render, Railway, or Google Cloud Run,
+# you can either:
+# 1. Set the environment variable in Netlify: VITE_API_URL=https://your-backend-app.onrender.com
+# OR
+# 2. Uncomment the API proxy redirect below to forward all /api/* requests:
+#
+# [[redirects]]
+#   from = "/api/*"
+#   to = "https://your-backend-app.onrender.com/api/:splat"
+#   status = 200
+#   force = true
+
+# Single Page Application (SPA) redirect rule:
+# Ensures page refreshes and direct routes resolve to index.html without 404 errors.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

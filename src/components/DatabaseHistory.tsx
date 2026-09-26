@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { PredictionHistoryItem, AcousticFeatures } from '../types/index.ts';
 import { ForensicCharts } from './ForensicCharts.tsx';
+import { getApiUrl } from '../utils/api.ts';
 
 interface DatabaseHistoryProps {
   authToken?: string | null;
@@ -45,7 +46,7 @@ export const DatabaseHistory: React.FC<DatabaseHistoryProps> = ({
       const headers: Record<string, string> = {};
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
-      const res = await fetch(`/api/history?${params.toString()}`, { headers });
+      const res = await fetch(getApiUrl(`/api/history?${params.toString()}`), { headers });
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -66,7 +67,7 @@ export const DatabaseHistory: React.FC<DatabaseHistoryProps> = ({
     if (!confirm(`Delete record #${id} from PostgreSQL database?`)) return;
 
     try {
-      const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
+      const res = await fetch(getApiUrl(`/api/history/${id}`), { method: 'DELETE' });
       if (res.ok) {
         setHistory((prev) => prev.filter((item) => item.id !== id));
         if (selectedItem?.id === id) {

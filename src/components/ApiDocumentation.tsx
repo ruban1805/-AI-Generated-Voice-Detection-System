@@ -9,6 +9,7 @@ import {
   FileCode,
   Sparkles,
 } from 'lucide-react';
+import { getApiUrl, API_BASE } from '../utils/api.ts';
 
 export const ApiDocumentation: React.FC = () => {
   const [activeEndpoint, setActiveEndpoint] = useState<'upload' | 'base64'>('base64');
@@ -17,7 +18,7 @@ export const ApiDocumentation: React.FC = () => {
   const [apiResponse, setApiResponse] = useState<string | null>(null);
   const [loadingTest, setLoadingTest] = useState(false);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  const baseUrl = API_BASE || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
 
   const curlBase64 = `curl -X POST "${baseUrl}/api/predict/base64" \\
   -H "Content-Type: application/json" \\
@@ -102,7 +103,7 @@ const data = await res.json();`;
     try {
       // Test the base64 endpoint with a minimal dummy audio payload
       const dummyBase64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-      const res = await fetch('/api/predict/base64', {
+      const res = await fetch(getApiUrl('/api/predict/base64'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

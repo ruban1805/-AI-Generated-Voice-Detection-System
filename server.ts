@@ -12,7 +12,7 @@ import {
   getModelBenchmarks,
 } from './src/db/predictions.ts';
 import { SAMPLE_AUDIO_DATABASE } from './src/services/sampleLibrary.ts';
-import { optionalAuth, AuthRequest } from './src/middleware/auth.ts';
+import { optionalAuth, type AuthRequest } from './src/middleware/auth.ts';
 
 dotenv.config();
 
@@ -20,24 +20,27 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+// CORS Preflight & Headers (essential for mobile WebKit, cross-origin iframes & preview URLs)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Body Parsers (support large audio files and Base64 audio payloads)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Multer memory storage for audio upload
+// Multer memory storage for audio upload - permissive filter for mobile iOS/Android containers
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 }, // 30 MB
-  fileFilter: (_req, file, cb) => {
-    // Accept standard audio formats
-    if (file.mimetype.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(file.originalname)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type: Please upload an MP3, WAV, M4A, or OGG audio file.'));
-    }
-  },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
 });
 
 // OpenAPI 3.0 Specification Schema
@@ -239,38 +242,61 @@ app.get('/api/benchmarks', async (_req, res) => {
   }
 });
 
-// API Prediction: File Upload (MP3, WAV, etc.)
+// API Prediction: File Upload (MP3, WAV, etc.) & Universal Fallback
 app.post(
-  '/api/predict',
+  ['/api/predict', '/api/predict/'],
   optionalAuth,
-  upload.fields([
-    { name: 'audio_file', maxCount: 1 },
-    { name: 'file', maxCount: 1 },
-  ]),
+  upload.any(),
   async (req: AuthRequest, res) => {
     try {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const uploadedFile = files?.audio_file?.[0] || files?.file?.[0];
+      // 1. Check if multipart audio file was provided
+      let uploadedBuffer: Buffer | null = null;
+      let filename = 'audio_recording.wav';
+      let fileSize = 0;
 
-      if (!uploadedFile) {
-        return res.status(400).json({ error: 'No audio file provided. Please upload an audio file.' });
+      const files = req.files as Express.Multer.File[] | { [key: string]: Express.Multer.File[] } | undefined;
+      let foundFile: Express.Multer.File | undefined;
+
+      if (Array.isArray(files) && files.length > 0) {
+        foundFile = files[0];
+      } else if (files && typeof files === 'object') {
+        const fileList = Object.values(files).flat();
+        if (fileList.length > 0) {
+          foundFile = fileList[0];
+        }
       }
 
-      const languageHint = req.body.language_hint && req.body.language_hint !== 'Auto-Detect'
+      if (foundFile) {
+        uploadedBuffer = foundFile.buffer;
+        filename = foundFile.originalname || filename;
+        fileSize = foundFile.size;
+      } else if (req.body?.audio_base64 && typeof req.body.audio_base64 === 'string') {
+        // Fallback: Check if base64 audio payload was sent directly in JSON body
+        const cleanBase64 = req.body.audio_base64.replace(/^data:[^;]+;base64,/, '').trim();
+        uploadedBuffer = Buffer.from(cleanBase64, 'base64');
+        filename = req.body.filename || filename;
+        fileSize = uploadedBuffer.length;
+      }
+
+      if (!uploadedBuffer || uploadedBuffer.length === 0) {
+        return res.status(400).json({ error: 'No audio data received. Please record or upload an audio file.' });
+      }
+
+      const languageHint = req.body?.language_hint && req.body.language_hint !== 'Auto-Detect'
         ? req.body.language_hint
         : undefined;
 
       // Extract acoustic and forensic features
-      const result = analyzeAudioBuffer(uploadedFile.buffer, languageHint, uploadedFile.originalname);
+      const result = analyzeAudioBuffer(uploadedBuffer, languageHint, filename);
 
       // Save to PostgreSQL
       let savedRecord = null;
       try {
         savedRecord = await createPredictionRecord({
           userUid: req.user?.uid || null,
-          filename: uploadedFile.originalname || 'uploaded_audio.mp3',
-          audioFormat: path.extname(uploadedFile.originalname || 'mp3').replace('.', '') || 'mp3',
-          fileSizeBytes: uploadedFile.size,
+          filename: filename,
+          audioFormat: path.extname(filename).replace('.', '') || 'wav',
+          fileSizeBytes: fileSize,
           durationSeconds: result.acousticFeatures.durationSeconds.toString(),
           sampleRate: result.acousticFeatures.sampleRate,
           detectedLanguage: result.detectedLanguage,
@@ -281,7 +307,7 @@ app.post(
           humanProbability: result.humanProbability.toString(),
           acousticFeatures: JSON.stringify(result.acousticFeatures),
           modelExplanation: JSON.stringify(result.explanation),
-          source: 'file_upload',
+          source: foundFile ? 'file_upload' : 'mobile_recording',
         });
       } catch (dbError) {
         console.error('Database save error (non-fatal):', dbError);
@@ -289,7 +315,7 @@ app.post(
 
       return res.json({
         id: savedRecord?.id || Math.floor(Math.random() * 100000),
-        filename: uploadedFile.originalname,
+        filename: filename,
         classification: result.classification,
         confidence_score: result.confidenceScore,
         ai_probability: result.aiProbability,
@@ -310,7 +336,7 @@ app.post(
 );
 
 // API Prediction: Base64 Audio Input
-app.post('/api/predict/base64', optionalAuth, async (req: AuthRequest, res) => {
+app.post(['/api/predict/base64', '/api/predict/base64/'], optionalAuth, async (req: AuthRequest, res) => {
   try {
     const { audio_base64, language_hint, filename } = req.body;
 
@@ -318,8 +344,8 @@ app.post('/api/predict/base64', optionalAuth, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Missing audio_base64 field in request body.' });
     }
 
-    // Clean Base64 prefix if present (e.g. data:audio/mp3;base64,...)
-    const cleanBase64 = audio_base64.replace(/^data:audio\/[^;]+;base64,/, '').trim();
+    // Clean Base64 prefix if present (e.g. data:audio/mp3;base64, data:audio/wav;base64, etc.)
+    const cleanBase64 = audio_base64.replace(/^data:[^;]+;base64,/, '').trim();
     const audioBuffer = Buffer.from(cleanBase64, 'base64');
 
     if (audioBuffer.length === 0) {
@@ -327,15 +353,16 @@ app.post('/api/predict/base64', optionalAuth, async (req: AuthRequest, res) => {
     }
 
     const lang = language_hint && language_hint !== 'Auto-Detect' ? language_hint : undefined;
-    const result = analyzeAudioBuffer(audioBuffer, lang, filename || 'base64_audio_sample.wav');
+    const fname = filename || 'recording.wav';
+    const result = analyzeAudioBuffer(audioBuffer, lang, fname);
 
     // Persist to PostgreSQL
     let savedRecord = null;
     try {
       savedRecord = await createPredictionRecord({
         userUid: req.user?.uid || null,
-        filename: filename || 'base64_audio_sample.wav',
-        audioFormat: 'base64',
+        filename: fname,
+        audioFormat: 'wav',
         fileSizeBytes: audioBuffer.length,
         durationSeconds: result.acousticFeatures.durationSeconds.toString(),
         sampleRate: result.acousticFeatures.sampleRate,
@@ -347,7 +374,7 @@ app.post('/api/predict/base64', optionalAuth, async (req: AuthRequest, res) => {
         humanProbability: result.humanProbability.toString(),
         acousticFeatures: JSON.stringify(result.acousticFeatures),
         modelExplanation: JSON.stringify(result.explanation),
-        source: 'base64',
+        source: 'mobile_recording_base64',
       });
     } catch (dbError) {
       console.error('Database save error (non-fatal):', dbError);
@@ -355,7 +382,7 @@ app.post('/api/predict/base64', optionalAuth, async (req: AuthRequest, res) => {
 
     return res.json({
       id: savedRecord?.id || Math.floor(Math.random() * 100000),
-      filename: filename || 'base64_audio_sample.wav',
+      filename: fname,
       classification: result.classification,
       confidence_score: result.confidenceScore,
       ai_probability: result.aiProbability,
@@ -422,6 +449,11 @@ app.delete('/api/history/:id', async (req, res) => {
     console.error('Delete error:', error);
     return res.status(500).json({ error: 'Failed to delete prediction record' });
   }
+});
+
+// API: Catch-all JSON 404 handler for any unhandled /api routes
+app.all('/api/*', (_req, res) => {
+  res.status(404).json({ error: 'API endpoint not found. Please check method or route path.' });
 });
 
 // Development vs Production Setup
